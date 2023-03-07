@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: container-update-cronjob
+spec:
+  schedule: "0 10 * * 1-5"  # Run at 10am every weekday
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: auto-update-sa
+          containers:
+            - name: deploy-update
+              image: bitnami/kubectl:latest
+              command: [ "sh", "-c" ]
+              env:
+                - name: DEPLOY_NAME
+                  value: <DEPLOY_NAME>
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              args:
+                - |
+                  kubectl config set-cluster k8s --server=https://kubernetes.default.svc \
+                      --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                  kubectl config set-credentials deployer --token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  kubectl config set-context k8s --cluster k8s --user deployer
+                  kubectl config use-context k8s
+                  
+                  kubectl rollout restart deployment $DEPLOY_NAME -n $NAMESPACE
+          restartPolicy: Never
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auto-update-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+rules:
+  - apiGroups:
+      - ""
+      - apps
+      - extensions
+    resources:
+      - deployments
+      - replicaset
+      - pods
+    verbs:
+      - get
+      - watch
+      - list
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auto-update-sa-binding
+subjects:
+  - kind: ServiceAccount
+    name: auto-update-sa
+roleRef:
+  kind: Role
+  name: deployer
+  apiGroup: rbac.authorization.k8s.io
